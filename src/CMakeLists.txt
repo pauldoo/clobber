@@ -6,10 +6,18 @@ project(clobber)
 add_executable(clobber)
 set_property(TARGET clobber PROPERTY CXX_STANDARD 17)
 
-target_compile_options(clobber PRIVATE -Wall -Wextra -fhardened)
-target_link_options(clobber PRIVATE -Wall -Wextra -fhardened)
+target_compile_options(clobber PRIVATE -Wall -Wextra -fhardened -flto)
+target_link_options(clobber PRIVATE -Wall -Wextra -fhardened -flto)
 
 target_sources(clobber
   PRIVATE
+    basic_types.cpp
+    board.cpp
+    game.cpp
+    game_state.cpp
+    human_player.cpp
     main.cpp
+    player.cpp
+    random.cpp
+    random_player.cpp
 )

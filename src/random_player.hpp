@@ -1,0 +1,18 @@
+#pragma once
+
+#include <random>
+
+#include "player.hpp"
+
+class RandomPlayer final : public Player {
+private:
+    std::mt19937_64 m_rng;
+
+public:
+    ~RandomPlayer();
+
+    RandomPlayer();
+
+    Move decide_move(const GameState&) override;
+};
+
