@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "basic_types.hpp"
 #include "forwards.hpp"
 
@@ -9,6 +11,6 @@ public:
 
     virtual Move decide_move(const GameState&) = 0;
 
-    virtual std::string name() = 0;
+    virtual std::string name() const = 0;
 };
 

@@ -39,6 +39,7 @@ void Game::do_next_turn() {
     std::cout << player->name() << "'s turn\n";
 
     const Move m = player->decide_move(*m_game_state);
+    std::cout << "Move: " << m << "\n";
     m_game_state = m_game_state->apply_move(m);
 }
 

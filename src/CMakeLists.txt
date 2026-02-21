@@ -6,8 +6,10 @@ project(clobber)
 add_executable(clobber)
 set_property(TARGET clobber PROPERTY CXX_STANDARD 17)
 
-target_compile_options(clobber PRIVATE -Wall -Wextra -fhardened -flto)
-target_link_options(clobber PRIVATE -Wall -Wextra -fhardened -flto)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic)
+  target_link_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic)
+endif()
 
 target_sources(clobber
   PRIVATE

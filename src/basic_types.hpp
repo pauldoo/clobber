@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iosfwd>
 #include <optional>
+#include <variant>
 
 constexpr int BOARD_WIDTH = 5;
 constexpr int BOARD_HEIGHT = 6;
@@ -35,6 +36,8 @@ enum class Direction : uint8_t {
     LEFT,
     RIGHT
 };
+
+
 
 /**
  * A location on the board, just a coordinate.
@@ -71,6 +74,10 @@ public:
         return m_from;
     }
 
+    Direction direction() const {
+        return m_direction;
+    }
+
     Location to() const;
 };
 
@@ -84,6 +91,12 @@ std::ostream& operator<<(std::ostream& os, Side side);
 
 std::ostream& operator<<(std::ostream& out, Square s);
 
+std::ostream& operator<<(std::ostream& out, Direction d);
+
+std::ostream& operator<<(std::ostream& out, const Location& l);
+
+std::ostream& operator<<(std::ostream& out, const Move& m);
+
 constexpr char square_to_char(Square s) {
     switch (s) {
         case Square::EMPTY:
@@ -96,3 +109,5 @@ constexpr char square_to_char(Square s) {
             return '?';
     }
 }
+
+Direction direction_from_char(char dir);

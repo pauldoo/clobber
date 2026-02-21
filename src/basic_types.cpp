@@ -91,6 +91,65 @@ Side next_side(Side s) {
         case Side::BLACK:
             return Side::WHITE;
         default:
-            throw std::out_of_range("Invalid side");            
+            throw std::out_of_range("Invalid side");
     }
+}
+
+Direction direction_from_char(char dir) {
+    Direction d;
+    switch (dir) {
+        case 'u':
+        case 'U':
+            d = Direction::UP;
+            break;
+        
+        case 'd':
+        case 'D':
+            d = Direction::DOWN;
+            break;
+
+        case 'l':
+        case 'L':
+            d = Direction::LEFT;
+            break;
+
+        case 'r':
+        case 'R':
+            d = Direction::RIGHT;
+            break;
+
+        default:
+            throw std::out_of_range("Unrecognised direction");
+    }
+    return d;
+}
+
+std::ostream& operator<<(std::ostream& out, Direction d) {
+    switch (d) {
+        case Direction::UP:
+            out << 'U';
+            break;
+        case Direction::DOWN:
+            out << 'D';
+            break;
+        case Direction::LEFT:
+            out << 'L';
+            break;
+        case Direction::RIGHT:
+            out << 'R';
+            break;
+        default:
+            throw std::out_of_range("Invalid direction");
+    }
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const Location& l) {
+    out << static_cast<int>(l.row()) << " " << static_cast<int>(l.column());
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const Move& m) {
+    out << m.from() << " " << m.direction();
+    return out;
 }

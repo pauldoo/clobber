@@ -1,9 +1,6 @@
 default_type := 'Debug'
 #default_type := 'RelWithDebInfo'
 
-export CC := '/usr/bin/gcc-14'
-export CXX := '/usr/bin/g++-14'
-
 go type=default_type: (build type)
     ./build/{{type}}/clobber
 
