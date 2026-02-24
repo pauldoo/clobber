@@ -12,8 +12,8 @@ int main(void) {
     const long total_games = 30;
     long white_wins = 0;
     for (int i = 0; i < total_games; i++) {
-        std::shared_ptr<Player> player1 = std::make_shared<RandomPlayer>();
-        std::shared_ptr<Player> player2 = std::make_shared<MCTSPlayer>();
+        std::shared_ptr<Player> player1 = std::make_shared<MCTSPlayer>(1000);
+        std::shared_ptr<Player> player2 = std::make_shared<MCTSPlayer>(10000);
 
         Game g(player1, player2);
 

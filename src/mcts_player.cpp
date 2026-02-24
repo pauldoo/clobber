@@ -1,8 +1,10 @@
 #include "mcts_player.hpp"
 
 #include <algorithm>
+#include <iostream>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <type_traits>
@@ -14,11 +16,16 @@ static_assert(!std::is_abstract<MCTSPlayer>::value, "Must not be abstract");
 
 MCTSPlayer::~MCTSPlayer() = default;
 
-MCTSPlayer::MCTSPlayer() : m_rng(std::make_shared<std::mt19937_64>(make_random_seed())) {
+MCTSPlayer::MCTSPlayer(long think_iterations_min) :
+    m_rng(std::make_shared<std::mt19937_64>(make_random_seed())),
+    m_think_iterations_min(think_iterations_min)
+{
 }
 
 std::string MCTSPlayer::name() const {
-    return "MCTS";
+    std::ostringstream name;
+    name << "MCTS(" << m_think_iterations_min << ")";
+    return name.str();
 }
 
 namespace {
@@ -86,6 +93,11 @@ namespace {
             return m_game_state;
         }
 
+        void accumulate_reward_for(Side winner) {
+            m_white_reward += (winner == Side::WHITE) ? 1 : 0;
+            m_visit_count += 1;
+        }
+
         std::shared_ptr<SearchNode> best_child_by_uct() {
             const long self_visit_count = m_visit_count;
             const Side self_side = m_game_state->next_to_play();
@@ -109,7 +121,7 @@ namespace {
             long reward = (parent_side == Side::WHITE) ?
                 m_white_reward : (m_visit_count - m_white_reward);
 
-            return (reward / m_visit_count) + 
+            return (static_cast<double>(reward) / m_visit_count) + 
                 UCT_C * std::sqrt(std::log(parent_visit_count) / m_visit_count);
         }
 
@@ -125,45 +137,19 @@ namespace {
             std::shared_ptr<SearchNode> self = shared_from_this();
             if (m_untried_moves.empty()) {
                 // This can happen if the game is over.
-                return self;
+                return nullptr;
             }
 
             Move move = m_untried_moves.back();
             m_untried_moves.pop_back();
             std::shared_ptr<const GameState> new_state = m_game_state->apply_move(move);
             std::shared_ptr<SearchNode> child_node = find_or_create(cache, new_state);
-
-            if (child_node->is_visited()) {
-                // We have uncovered a new route to a state we have explored before.
-                // Backpropagate the rewards we ought to have received had the link
-                // been made earlier.
-                backpropagate(
-                    child_node->m_white_reward,
-                    child_node->m_visit_count
-                );
-            }
-
+    
             m_children.push_back(child_node);
             child_node->m_parents.push_back(self);
             m_moves.push_back(move);
 
             return child_node;
-        }
-
-        void backpropagate(long white_reward, long visit_count) {
-            std::vector<std::weak_ptr<SearchNode>> queue;
-
-            queue.push_back(shared_from_this());
-
-            while (!queue.empty()) {
-                std::shared_ptr<SearchNode> node = queue.back().lock();
-                queue.pop_back();
-
-                node->m_white_reward += white_reward;
-                node->m_visit_count += visit_count;
-
-                queue.insert(queue.end(), node->m_parents.begin(), node->m_parents.end());
-            }
         }
 
         long visit_count() const {
@@ -185,6 +171,8 @@ namespace {
                 throw std::runtime_error("No best move found.");
             }
             auto idx = std::distance(m_children.cbegin(), best_it);
+
+            std::cout << "Confidence: " << (*best_it)->visit_count() << " / " << m_visit_count << "\n";
             return m_moves.at(idx);
         }
 
@@ -214,33 +202,25 @@ namespace {
         std::shared_ptr<SearchNode> m_root_node;
         std::shared_ptr<std::mt19937_64> m_rng;
 
-    public:
-        ~Search() = default;
-        Search(
-            const std::shared_ptr<const GameState>& initial_state,
-            const std::shared_ptr<std::mt19937_64>& rng
-        ) {
-            m_root_node = find_or_create(m_node_cache, initial_state);
-            m_rng = rng;
-        }
-
-        void single_iteration() {
-            std::shared_ptr<SearchNode> unvisited = select_unvisited();
-
-            Side winner = random_rollout(unvisited->game_state());
-            unvisited->backpropagate((winner == Side::WHITE) ? 1 : 0, 1);
-        }
-
-        std::shared_ptr<SearchNode> select_unvisited() {
-            std::shared_ptr<SearchNode> node = m_root_node;
-            while (node->is_visited() && !node->is_terminal()) {
+        Side traverse(std::shared_ptr<SearchNode> node) {
+            std::shared_ptr<SearchNode> next;
+            if (node->is_visited() && !node->is_terminal()) {
                 if (node->is_fully_expanded()) {
-                    node = node->best_child_by_uct();
+                    next = node->best_child_by_uct();
                 } else {
-                    node = node->expand(m_node_cache);
+                    next = node->expand(m_node_cache);
                 }
             }
-            return node;
+
+            Side winner;
+            if (next) {
+                winner = traverse(next);
+            } else {
+                winner = random_rollout(node->game_state());
+            }
+            
+            node->accumulate_reward_for(winner);
+            return winner;
         }
 
         /**
@@ -257,6 +237,20 @@ namespace {
                 Move move = available_moves.at(dist(*m_rng));
                 state = state->apply_move(move);
             }
+        }        
+
+    public:
+        ~Search() = default;
+        Search(
+            const std::shared_ptr<const GameState>& initial_state,
+            const std::shared_ptr<std::mt19937_64>& rng
+        ) {
+            m_root_node = find_or_create(m_node_cache, initial_state);
+            m_rng = rng;
+        }
+
+        void single_iteration() {
+            traverse(m_root_node);
         }
 
         Move best_move() const {
@@ -273,13 +267,12 @@ namespace {
 Move MCTSPlayer::decide_move(const std::shared_ptr<const GameState>& game_state) {
     Search search(game_state, m_rng);
 
-    const long iteration_count_max = 100000;
     long iteration_count = 0;
     while (true) {
         search.single_iteration();
         iteration_count += 1;
 
-        if (iteration_count >= iteration_count_max && search.root_is_fully_expanded()) {
+        if (iteration_count >= m_think_iterations_min && search.root_is_fully_expanded()) {
             break;
         }
     }

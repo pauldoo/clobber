@@ -7,8 +7,25 @@ add_executable(clobber)
 set_property(TARGET clobber PROPERTY CXX_STANDARD 17)
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-  target_compile_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic -Wno-hardened)
-  target_link_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic -Wno-hardened)
+  target_compile_options(clobber PRIVATE
+    -flto
+    -fno-fat-lto-objects
+    -fhardened
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-hardened
+  )
+
+  target_link_options(clobber PRIVATE
+    -flto
+    -fno-fat-lto-objects
+    -fhardened
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-hardened
+  )
 endif()
 
 target_sources(clobber
