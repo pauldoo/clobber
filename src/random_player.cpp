@@ -16,8 +16,12 @@ std::string RandomPlayer::name() const {
     return "Random";
 }
 
-Move RandomPlayer::decide_move(const GameState& game_state) {
-    auto available_moves = game_state.all_valid_moves();
+bool RandomPlayer::may_attempt_illegal_moves() const {
+    return false;
+}
+
+Move RandomPlayer::decide_move(const std::shared_ptr<const GameState>& game_state) {
+    auto available_moves = game_state->all_valid_moves();
 
     std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
     return available_moves.at(dist(m_rng));

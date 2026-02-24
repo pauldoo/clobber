@@ -14,7 +14,11 @@ std::string HumanPlayer::name() const {
     return "Human";
 }
 
-Move HumanPlayer::decide_move(const GameState&) {
+bool HumanPlayer::may_attempt_illegal_moves() const {
+    return true;
+}
+
+Move HumanPlayer::decide_move(const std::shared_ptr<const GameState>&) {
     while (true) {
         std::cout <<
             "Your move. Please enter: <row> <col> <direction>\n" <<

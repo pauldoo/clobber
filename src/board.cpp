@@ -41,3 +41,17 @@ std::ostream& operator<<(std::ostream& out, const Board& b) {
     }
     return out;
 }
+
+bool operator==(const Board& lhs, const Board& rhs) {
+    return lhs.m_grid == rhs.m_grid;
+}
+
+size_t Board::hash() const {
+    size_t result = 0;
+    for (int row = 0; row < BOARD_HEIGHT; row++) {
+        for (int col = 0; col < BOARD_WIDTH; col++) {
+            result = (result * 3) + static_cast<size_t>(m_grid.at(row).at(col));
+        }
+    }
+    return result;
+}

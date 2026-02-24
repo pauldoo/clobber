@@ -11,6 +11,9 @@ class GameState final {
 private:
     Side m_next_to_play;
     Board m_board;
+
+    void apply_move_inplace(const Move m);
+
 public:
     ~GameState();
 
@@ -31,11 +34,13 @@ public:
         return m_board;
     }
 
-    void apply_move_inplace(const Move m);
-
     std::unique_ptr<GameState> apply_move(const Move m) const;
 
     std::vector<Move> all_valid_moves() const;
+
+    size_t hash() const;
 };
+
+bool operator==(const GameState&, const GameState&);
 
 std::ostream& operator<<(std::ostream&, const GameState&);

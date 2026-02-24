@@ -15,14 +15,14 @@ Game::Game(
     Board initial_board;
     initial_board.set_to_initial_state();
 
-    m_game_state = std::make_unique<const GameState>(
+    m_game_state = std::make_shared<const GameState>(
         Side::WHITE, initial_board
     );
     m_players.at(0) = p1;
     m_players.at(1) = p2;
 }
 
-void Game::run() {
+Side Game::run() {
     while (true) {
         std::cout << "----------\n";
         std::cout << *m_game_state << "\n";
@@ -32,16 +32,19 @@ void Game::run() {
 
         do_next_turn();
     }
+    Side winner = next_side(m_game_state->next_to_play());
     std::cout
         << "Game finished\n"
-        << "Winner: " << next_side(m_game_state->next_to_play()) << "\n";
+        << "Winner: " << winner << "\n";
+    
+    return winner;
 }
 
 void Game::do_next_turn() {
     auto player = m_players.at(static_cast<size_t>(m_game_state->next_to_play()));
     std::cout << player->name() << "'s turn\n";
 
-    const Move m = player->decide_move(*m_game_state);
+    const Move m = player->decide_move(m_game_state);
     std::cout << "Move: " << m << "\n";
 
     try {

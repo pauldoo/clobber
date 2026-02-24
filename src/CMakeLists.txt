@@ -7,8 +7,8 @@ add_executable(clobber)
 set_property(TARGET clobber PROPERTY CXX_STANDARD 17)
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-  target_compile_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic)
-  target_link_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic)
+  target_compile_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic -Wno-hardened)
+  target_link_options(clobber PRIVATE -fhardened -Wall -Wextra -Wpedantic -Wno-hardened)
 endif()
 
 target_sources(clobber
@@ -19,6 +19,7 @@ target_sources(clobber
     game_state.cpp
     human_player.cpp
     main.cpp
+    mcts_player.cpp
     player.cpp
     random.cpp
     random_player.cpp

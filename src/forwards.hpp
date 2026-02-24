@@ -7,6 +7,7 @@ class Game;
 class GameState;
 class HumanPlayer;
 class Location;
+class MCTSPlayer;
 class Move;
 class Player;
 class RandomPlayer;

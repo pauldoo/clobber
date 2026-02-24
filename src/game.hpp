@@ -12,7 +12,7 @@
 class Game {
 private:
     std::array<std::shared_ptr<Player>, 2> m_players;
-    std::unique_ptr<const GameState> m_game_state;
+    std::shared_ptr<const GameState> m_game_state;
 
 public:
     ~Game();
@@ -22,7 +22,8 @@ public:
         const std::shared_ptr<Player>& p2
     );
 
-    void run();
+    /** returns the winner. */
+    Side run();
     void do_next_turn();
 };
 

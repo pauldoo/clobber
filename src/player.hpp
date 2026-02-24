@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include "basic_types.hpp"
@@ -9,7 +10,7 @@ class Player {
 public:
     virtual ~Player() = 0;
 
-    virtual Move decide_move(const GameState&) = 0;
+    virtual Move decide_move(const std::shared_ptr<const GameState>&) = 0;
 
     virtual std::string name() const = 0;
 

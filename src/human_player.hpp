@@ -9,11 +9,9 @@ public:
 
     HumanPlayer();
 
-    Move decide_move(const GameState&) override;
+    Move decide_move(const std::shared_ptr<const GameState>&) override;
 
     std::string name() const override;
 
-    bool may_attempt_illegal_moves() const override {
-        return true;
-    }
+    bool may_attempt_illegal_moves() const override;
 };

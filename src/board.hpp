@@ -22,6 +22,10 @@ public:
     void set_square(Location l, Square s);
 
     void set_to_initial_state();
+
+    size_t hash() const;
 };
+
+bool operator==(const Board&, const Board&);
 
 std::ostream& operator<<(std::ostream& out, const Board& b);

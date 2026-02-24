@@ -89,3 +89,11 @@ std::vector<Move> GameState::all_valid_moves() const {
 
     return result;
 }
+
+size_t GameState::hash() const {
+    return static_cast<int>(m_next_to_play) * 31 + m_board.hash();
+}
+
+bool operator==(const GameState& lhs, const GameState& rhs) {
+    return lhs.next_to_play() == rhs.next_to_play() && lhs.board() == rhs.board();
+}
