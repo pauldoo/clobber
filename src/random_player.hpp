@@ -16,5 +16,9 @@ public:
     Move decide_move(const GameState&) override;
 
     std::string name() const override;
+
+    bool may_attempt_illegal_moves() const override {
+        return false;
+    }
 };
 

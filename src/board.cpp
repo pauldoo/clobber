@@ -7,16 +7,12 @@ Board::~Board() = default;
 
 Board::Board() = default;
 
-size_t Board::index(Location loc) const {
-    return loc.row() * BOARD_WIDTH + loc.column();
-}
-
 Square Board::get_square(Location loc) const {
-    return m_grid.at(index(loc));
+    return m_grid.at(loc.row()).at(loc.column());
 }
 
 void Board::set_square(Location loc, Square s) {
-    m_grid.at(index(loc)) = s;
+    m_grid.at(loc.row()).at(loc.column()) = s;
 }
 
 void Board::set_to_initial_state() {

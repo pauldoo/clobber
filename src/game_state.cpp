@@ -61,3 +61,31 @@ std::ostream& operator<<(std::ostream& out, const GameState& s) {
     out << "Next to play: " << s.next_to_play() << "\n";
     return out;
 }
+
+std::vector<Move> GameState::all_valid_moves() const {
+    Square expected_from = to_square(m_next_to_play);
+    Square expected_to = to_square(next_side(m_next_to_play)); 
+
+    std::vector<Move> result;
+    for (int row = 0; row < BOARD_HEIGHT; row++) {
+        for (int col = 0; col < BOARD_WIDTH; col++) {
+            if (m_board.get_square({row, col}) == expected_from) {
+
+                if (row > 0 && m_board.get_square({row-1, col}) == expected_to) {
+                    result.push_back(Move{{row, col}, Direction::UP});
+                }
+                if (row < (BOARD_HEIGHT-1) && m_board.get_square({row+1, col}) == expected_to) {
+                    result.push_back(Move{{row, col}, Direction::DOWN});
+                }
+                if (col > 0 && m_board.get_square({row, col-1}) == expected_to) {
+                    result.push_back(Move{{row, col}, Direction::LEFT});
+                }
+                if (col < (BOARD_WIDTH-1) && m_board.get_square({row, col+1}) == expected_to) {
+                    result.push_back(Move{{row, col}, Direction::RIGHT});
+                }
+            }
+        }
+    }
+
+    return result;
+}

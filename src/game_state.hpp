@@ -2,6 +2,7 @@
 
 #include <iosfwd>
 #include <memory>
+#include <vector>
 
 #include "basic_types.hpp"
 #include "board.hpp"
@@ -33,6 +34,8 @@ public:
     void apply_move_inplace(const Move m);
 
     std::unique_ptr<GameState> apply_move(const Move m) const;
+
+    std::vector<Move> all_valid_moves() const;
 };
 
 std::ostream& operator<<(std::ostream&, const GameState&);

@@ -1,5 +1,6 @@
 #include "human_player.hpp"
 
+#include <stdexcept>
 #include <iostream>
 #include <type_traits>
 
@@ -24,6 +25,9 @@ Move HumanPlayer::decide_move(const GameState&) {
         char direction;
         std::cin >> row >> column >> direction;
         if (!std::cin) {
+            if (std::cin.eof()) {
+                throw std::runtime_error("Game aborted.");
+            }
             std::cout << "Oops, didn't get that. Try again.\n";
             continue;
         }

@@ -10,9 +10,7 @@ class Board final
 {
 public:
 
-    std::array<Square, BOARD_WIDTH * BOARD_HEIGHT> m_grid;
-
-    size_t index(Location l) const;
+    std::array<std::array<Square, BOARD_WIDTH>, BOARD_HEIGHT> m_grid;
 
 public:
     ~Board();
