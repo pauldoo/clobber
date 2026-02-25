@@ -28,36 +28,19 @@ std::string MCTSPlayer::name() const {
     return name.str();
 }
 
-namespace {
+namespace detail {
     const double UCT_C = std::sqrt(2.0);
 
-    class SearchNode;
+    size_t GameStateHash::operator()(const std::shared_ptr<const GameState>& game_state) const {
+        return game_state->hash();
+    }
 
-    struct GameStateHash {
-        size_t operator()(const std::shared_ptr<const GameState>& game_state) const {
-            return game_state->hash();
-        }
-    };
-
-    struct GameStateEqual {
-        bool operator()(
-            const std::shared_ptr<const GameState>& lhs,
-            const std::shared_ptr<const GameState>& rhs
-        ) const {
-            return (*lhs) == (*rhs);
-        }
-    };
-
-    using NodeCache = std::unordered_map<
-        std::shared_ptr<const GameState>,
-        std::shared_ptr<SearchNode>,
-        GameStateHash,
-        GameStateEqual>;
-
-    std::shared_ptr<SearchNode> find_or_create(
-        NodeCache& cache,
-        const std::shared_ptr<const GameState>& game_state
-    );
+    bool GameStateEqual::operator()(
+        const std::shared_ptr<const GameState>& lhs,
+        const std::shared_ptr<const GameState>& rhs
+    ) const {
+        return (*lhs) == (*rhs);
+    }
     
     class SearchNode final : public std::enable_shared_from_this<SearchNode> {
     private:
@@ -153,6 +136,13 @@ namespace {
             child_node->m_parents.push_back(self);
             m_moves.push_back(move);
 
+            if (m_untried_moves.empty()) {
+                // That was the last move to expand, so compact memory.
+                m_untried_moves.shrink_to_fit();
+                m_moves.shrink_to_fit();
+                m_children.shrink_to_fit();
+            }
+
             return child_node;
         }
 
@@ -188,6 +178,25 @@ namespace {
             return m_moves.at(idx);
         }
 
+        static void recache(
+            NodeCache& cache,
+            const std::shared_ptr<detail::SearchNode>& node
+        ) {
+            auto insert = cache.insert({node->game_state(), node});
+            if (insert.first->first != node->game_state()) {
+                throw std::runtime_error("Key mismatch.");
+            }
+            if (insert.first->second != node) {
+                throw std::runtime_error("Value mismatch.");
+            }
+            if (insert.second) {
+                // Node was newly inserted, so recache children too.
+                for (auto& child : node->m_children) {
+                    recache(cache, child);
+                }
+            }
+        }
+
     };
 
     std::shared_ptr<SearchNode> find_or_create(
@@ -205,88 +214,65 @@ namespace {
             }
             return insert.first->second;
         }
-    }   
+    }
+}
 
-
-    class Search final {
-    private:
-        NodeCache m_node_cache;
-        std::shared_ptr<SearchNode> m_root_node;
-        std::shared_ptr<std::mt19937_64> m_rng;
-
-        Side traverse(std::shared_ptr<SearchNode> node) {
-            std::shared_ptr<SearchNode> next;
-            if (node->is_visited() && !node->is_terminal()) {
-                if (node->is_fully_expanded()) {
-                    next = node->best_child_by_uct();
-                } else {
-                    next = node->expand(m_node_cache);
-                }
-            }
-
-            Side winner;
-            if (next) {
-                winner = traverse(next);
-            } else {
-                winner = random_rollout(node->game_state());
-            }
-            
-            node->accumulate_reward_for(winner);
-            return winner;
+Side MCTSPlayer::traverse(std::shared_ptr<detail::SearchNode> node) {
+    std::shared_ptr<detail::SearchNode> next;
+    if (node->is_visited() && !node->is_terminal()) {
+        if (node->is_fully_expanded()) {
+            next = node->best_child_by_uct();
+        } else {
+            next = node->expand(m_node_cache);
         }
+    }
 
-        /**
-         * Random rollout, returns the winner.
-         */
-        Side random_rollout(std::shared_ptr<const GameState> state) const {
-            while (true) {
-                const std::vector<Move> available_moves = state->all_valid_moves();
+    Side winner;
+    if (next) {
+        winner = traverse(next);
+    } else {
+        winner = random_rollout(node->game_state());
+    }
+    
+    node->accumulate_reward_for(winner);
+    return winner;
+}
 
-                if (available_moves.empty()) {
-                    return next_side(state->next_to_play());
-                }
-                std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
-                Move move = available_moves.at(dist(*m_rng));
-                state = state->apply_move(move);
-            }
-        }        
 
-    public:
-        ~Search() = default;
-        Search(
-            const std::shared_ptr<const GameState>& initial_state,
-            const std::shared_ptr<std::mt19937_64>& rng
-        ) {
-            m_root_node = find_or_create(m_node_cache, initial_state);
-            m_rng = rng;
+Side MCTSPlayer::random_rollout(std::shared_ptr<const GameState> state) const {
+    while (true) {
+        const std::vector<Move> available_moves = state->all_valid_moves();
+
+        if (available_moves.empty()) {
+            return next_side(state->next_to_play());
         }
+        std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
+        Move move = available_moves.at(dist(*m_rng));
+        state = state->apply_move(move);
+    }
+}
 
-        void single_iteration() {
-            traverse(m_root_node);
-        }
+void MCTSPlayer::update_root(const std::shared_ptr<const GameState>& game_state) {
+    size_t size_old = m_node_cache.size();
+    m_root_node = detail::find_or_create(m_node_cache, game_state);
+    m_node_cache.clear();
 
-        Move best_move(std::ostream& log) const {
-            return m_root_node->best_move(log);
-        }
-
-        bool root_is_fully_expanded() const {
-            return m_root_node->is_fully_expanded();
-        }
-    };
-
+    detail::SearchNode::recache(m_node_cache, m_root_node);
+    size_t size_new = m_node_cache.size();
+    m_log << "Node cache: " << size_old << " -> " << size_new << "\n";
 }
 
 Move MCTSPlayer::decide_move(const std::shared_ptr<const GameState>& game_state) {
-    Search search(game_state, m_rng);
+    update_root(game_state);
 
     long iteration_count = 0;
     while (true) {
-        search.single_iteration();
+        traverse(m_root_node);
         iteration_count += 1;
 
-        if (iteration_count >= m_think_iterations_min && search.root_is_fully_expanded()) {
+        if (iteration_count >= m_think_iterations_min && m_root_node->is_fully_expanded()) {
             break;
         }
     }
-    return search.best_move(m_log);
+    return m_root_node->best_move(m_log);
 }

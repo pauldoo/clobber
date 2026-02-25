@@ -23,6 +23,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 add_executable(clobber)
+#target_link_options(clobber PRIVATE -static)
 
 target_sources(clobber
   PRIVATE
