@@ -48,9 +48,9 @@ bool operator==(const Board& lhs, const Board& rhs) {
 
 size_t Board::hash() const {
     size_t result = 0;
-    for (int row = 0; row < BOARD_HEIGHT; row++) {
-        for (int col = 0; col < BOARD_WIDTH; col++) {
-            result = (result * 3) + static_cast<size_t>(m_grid.at(row).at(col));
+    for (const auto& row : m_grid) {
+        for (const auto& square : row) {
+            result = (result * 3) + static_cast<size_t>(square);
         }
     }
     return result;
