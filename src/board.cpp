@@ -27,13 +27,13 @@ void Board::set_to_initial_state() {
 }
 
 std::ostream& operator<<(std::ostream& out, const Board& b) {
-    out << " ";
+    out << "  ";
     for (int col = 0; col < BOARD_WIDTH; col++) {
         out << " " << col;
     }
     out << "\n\n";
     for (int row = 0; row < BOARD_HEIGHT; row++) {
-        out << row;
+        out << row << " ";
         for (int col = 0; col < BOARD_WIDTH; col++) {
             out << " " << b.get_square(Location(row, col));
         }

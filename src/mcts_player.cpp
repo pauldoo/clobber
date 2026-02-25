@@ -1,7 +1,6 @@
 #include "mcts_player.hpp"
 
 #include <algorithm>
-#include <iostream>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -16,7 +15,8 @@ static_assert(!std::is_abstract<MCTSPlayer>::value, "Must not be abstract");
 
 MCTSPlayer::~MCTSPlayer() = default;
 
-MCTSPlayer::MCTSPlayer(long think_iterations_min) :
+MCTSPlayer::MCTSPlayer(std::ostream& log, long think_iterations_min) :
+    m_log(log),
     m_rng(std::make_shared<std::mt19937_64>(make_random_seed())),
     m_think_iterations_min(think_iterations_min)
 {
@@ -98,6 +98,10 @@ namespace {
             m_visit_count += 1;
         }
 
+        double white_win_estimate() const {
+            return static_cast<double>(m_white_reward) / m_visit_count;
+        }
+
         std::shared_ptr<SearchNode> best_child_by_uct() {
             const long self_visit_count = m_visit_count;
             const Side self_side = m_game_state->next_to_play();
@@ -156,7 +160,7 @@ namespace {
             return m_visit_count;
         }
 
-        Move best_move() const {
+        Move best_move(std::ostream& log) const {
             if (!is_fully_expanded()) {
                 throw std::runtime_error("Best move not yet known");
             }
@@ -170,9 +174,17 @@ namespace {
             if (best_it == m_children.cend()) {
                 throw std::runtime_error("No best move found.");
             }
-            auto idx = std::distance(m_children.cbegin(), best_it);
 
-            std::cout << "Confidence: " << (*best_it)->visit_count() << " / " << m_visit_count << "\n";
+            std::shared_ptr<SearchNode> best = *best_it;
+            double win_estimate = best->white_win_estimate();
+            if (m_game_state->next_to_play() == Side::BLACK) {
+                win_estimate = 1.0 - win_estimate;
+            }
+
+            double decisiveness = static_cast<double>(best->m_visit_count) / m_visit_count;
+            log << "Win estimate: " << win_estimate << ", decisiveness: " << decisiveness << "\n";
+
+            auto idx = std::distance(m_children.cbegin(), best_it);
             return m_moves.at(idx);
         }
 
@@ -253,8 +265,8 @@ namespace {
             traverse(m_root_node);
         }
 
-        Move best_move() const {
-            return m_root_node->best_move();
+        Move best_move(std::ostream& log) const {
+            return m_root_node->best_move(log);
         }
 
         bool root_is_fully_expanded() const {
@@ -276,5 +288,5 @@ Move MCTSPlayer::decide_move(const std::shared_ptr<const GameState>& game_state)
             break;
         }
     }
-    return search.best_move();
+    return search.best_move(m_log);
 }

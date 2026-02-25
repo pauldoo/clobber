@@ -57,8 +57,8 @@ bool GameState::can_continue() const {
 }
 
 std::ostream& operator<<(std::ostream& out, const GameState& s) {
-    out << s.board() << "\n";
-    out << "Next to play: " << s.next_to_play() << "\n";
+    out << "Next to play: " << s.next_to_play() << "\n\n";
+    out << s.board();
     return out;
 }
 

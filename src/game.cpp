@@ -1,6 +1,6 @@
 #include "game.hpp"
 
-#include <iostream>
+#include <ostream>
 
 #include "board.hpp"
 #include "game_state.hpp"
@@ -9,9 +9,11 @@
 Game::~Game() = default;
 
 Game::Game(
+    std::ostream& log,
     const std::shared_ptr<Player>& p1,
     const std::shared_ptr<Player>& p2
-) {
+) : m_log(log)
+{
     Board initial_board;
     initial_board.set_to_initial_state();
 
@@ -24,16 +26,17 @@ Game::Game(
 
 Side Game::run() {
     while (true) {
-        std::cout << "----------\n";
-        std::cout << *m_game_state << "\n";
+        m_log << std::string(20, '=') << "\n";
+        m_log << *m_game_state;
         if (!m_game_state->can_continue()) {
             break;
         }
 
         do_next_turn();
     }
+    m_log << std::string(20, '=') << "\n";
     Side winner = next_side(m_game_state->next_to_play());
-    std::cout
+    m_log
         << "Game finished\n"
         << "Winner: " << winner << "\n";
     
@@ -42,16 +45,16 @@ Side Game::run() {
 
 void Game::do_next_turn() {
     auto player = m_players.at(static_cast<size_t>(m_game_state->next_to_play()));
-    std::cout << player->name() << "'s turn\n";
+    m_log << "\n" << player->name() << "'s turn\n";
 
     const Move m = player->decide_move(m_game_state);
-    std::cout << "Move: " << m << "\n";
+    m_log << "Move: " << m << "\n";
 
     try {
         m_game_state = m_game_state->apply_move(m);
     } catch (const std::exception& e) {
         if (player->may_attempt_illegal_moves()) {
-            std::cout << "That move is illegal. Please try again.\n";
+            m_log << "That move is illegal. Please try again.\n";
         } else {
             throw;
         }

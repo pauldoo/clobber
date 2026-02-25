@@ -37,6 +37,7 @@ target_sources(clobber
     human_player.cpp
     main.cpp
     mcts_player.cpp
+    null_io.cpp
     player.cpp
     random.cpp
     random_player.cpp
