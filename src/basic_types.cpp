@@ -153,3 +153,11 @@ std::ostream& operator<<(std::ostream& out, const Move& m) {
     out << m.from() << " " << m.direction();
     return out;
 }
+
+bool operator==(const Move& lhs, const Move& rhs) {
+    return lhs.from() == rhs.from() && lhs.direction() == rhs.direction();
+}
+
+bool operator==(const Location& lhs, const Location& rhs) {
+    return lhs.row() == rhs.row() && lhs.column() == rhs.column();
+}

@@ -13,10 +13,10 @@ int main(void) {
     const long total_games = 1;
     long white_wins = 0;
     for (int i = 0; i < total_games; i++) {
-        //std::shared_ptr<Player> player1 = std::make_shared<MCTSPlayer>(std::cout, 10000);
-        //std::shared_ptr<Player> player2 = std::make_shared<MCTSPlayer>(std::cout, 10000);
+        //std::shared_ptr<Player> player1 = std::make_shared<MCTSPlayer>(std::cout, 1000, 10);
+        //std::shared_ptr<Player> player2 = std::make_shared<MCTSPlayer>(std::cout, 1000, 1);
         std::shared_ptr<Player> player1 = std::make_shared<HumanPlayer>(std::cin, std::cout);
-        std::shared_ptr<Player> player2 = std::make_shared<MCTSPlayer>(std::cout, 1000000);
+        std::shared_ptr<Player> player2 = std::make_shared<MCTSPlayer>(std::cout, 100000, 10);
 
         Game g(std::cout, player1, player2);
 

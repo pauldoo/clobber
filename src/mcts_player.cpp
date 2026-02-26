@@ -1,12 +1,15 @@
 #include "mcts_player.hpp"
 
 #include <algorithm>
+#include <future>
 #include <memory>
+#include <random>
 #include <set>
 #include <sstream>
 #include <stdexcept>
-#include <unordered_map>
+#include <thread>
 #include <type_traits>
+#include <unordered_map>
 
 #include "game_state.hpp"
 #include "random.hpp"
@@ -15,21 +18,46 @@ static_assert(!std::is_abstract<MCTSPlayer>::value, "Must not be abstract");
 
 MCTSPlayer::~MCTSPlayer() = default;
 
-MCTSPlayer::MCTSPlayer(std::ostream& log, long think_iterations_min) :
+MCTSPlayer::MCTSPlayer(std::ostream& log, long think_iterations_min, int thread_count) :
     m_log(log),
-    m_rng(std::make_shared<std::mt19937_64>(make_random_seed())),
-    m_think_iterations_min(think_iterations_min)
+    m_think_iterations_min(think_iterations_min),
+    m_thread_count(thread_count)
 {
+    m_search = std::make_unique<detail::ParallelSearch>(m_log, m_thread_count);
 }
 
 std::string MCTSPlayer::name() const {
     std::ostringstream name;
-    name << "MCTS(" << m_think_iterations_min << ")";
+    name << "MCTS(" << m_thread_count << " x " << m_think_iterations_min << ")";
     return name.str();
 }
 
 namespace detail {
     const double UCT_C = std::sqrt(2.0);
+
+    class SearchNode;
+
+    struct GameStateHash {
+        size_t operator()(const std::shared_ptr<const GameState>& game_state) const;
+    };
+
+    struct GameStateEqual {
+        bool operator()(
+            const std::shared_ptr<const GameState>& lhs,
+            const std::shared_ptr<const GameState>& rhs
+        ) const;
+    };
+
+    using NodeCache = std::unordered_map<
+        std::shared_ptr<const GameState>,
+        std::shared_ptr<SearchNode>,
+        GameStateHash,
+        GameStateEqual>;
+
+    std::shared_ptr<SearchNode> find_or_create(
+        NodeCache& cache,
+        const std::shared_ptr<const GameState>& game_state
+    );
 
     size_t GameStateHash::operator()(const std::shared_ptr<const GameState>& game_state) const {
         return game_state->hash();
@@ -41,11 +69,21 @@ namespace detail {
     ) const {
         return (*lhs) == (*rhs);
     }
+
+    struct NodeStats {
+        long m_visit_count = 0;
+        long m_white_reward = 0;
+    };
+
+    NodeStats& operator+=(NodeStats& lhs, const NodeStats& rhs) {
+        lhs.m_visit_count += rhs.m_visit_count;
+        lhs.m_white_reward += rhs.m_white_reward;
+        return lhs;
+    }
     
     class SearchNode final : public std::enable_shared_from_this<SearchNode> {
     private:
-        long m_visit_count;
-        long m_white_reward;
+        NodeStats m_stats;
         bool m_moves_enumerated;
 
         const std::shared_ptr<const GameState> m_game_state;
@@ -58,14 +96,12 @@ namespace detail {
         ~SearchNode() = default;
 
         SearchNode(const std::shared_ptr<const GameState>& game_state) :
-            m_visit_count(0),
-            m_white_reward(0),
             m_moves_enumerated(false),
             m_game_state(game_state) {
         }
 
         bool is_visited() const {
-            return m_visit_count != 0;
+            return m_stats.m_visit_count != 0;
         }
 
         bool is_fully_expanded() const {
@@ -77,16 +113,12 @@ namespace detail {
         }
 
         void accumulate_reward_for(Side winner) {
-            m_white_reward += (winner == Side::WHITE) ? 1 : 0;
-            m_visit_count += 1;
-        }
-
-        double white_win_estimate() const {
-            return static_cast<double>(m_white_reward) / m_visit_count;
+            m_stats.m_white_reward += (winner == Side::WHITE) ? 1 : 0;
+            m_stats.m_visit_count += 1;
         }
 
         std::shared_ptr<SearchNode> best_child_by_uct() {
-            const long self_visit_count = m_visit_count;
+            const long self_visit_count = m_stats.m_visit_count;
             const Side self_side = m_game_state->next_to_play();
             auto max_it = std::max_element(m_children.begin(), m_children.end(),
                 [&](const std::shared_ptr<SearchNode>& lhs, const std::shared_ptr<SearchNode>& rhs) {
@@ -106,10 +138,10 @@ namespace detail {
             }
 
             long reward = (parent_side == Side::WHITE) ?
-                m_white_reward : (m_visit_count - m_white_reward);
+                m_stats.m_white_reward : (m_stats.m_visit_count - m_stats.m_white_reward);
 
-            return (static_cast<double>(reward) / m_visit_count) + 
-                UCT_C * std::sqrt(std::log(parent_visit_count) / m_visit_count);
+            return (static_cast<double>(reward) / m_stats.m_visit_count) + 
+                UCT_C * std::sqrt(std::log(parent_visit_count) / m_stats.m_visit_count);
         }
 
         bool is_terminal() const {
@@ -147,35 +179,46 @@ namespace detail {
         }
 
         long visit_count() const {
-            return m_visit_count;
+            return m_stats.m_visit_count;
         }
 
-        Move best_move(std::ostream& log) const {
-            if (!is_fully_expanded()) {
-                throw std::runtime_error("Best move not yet known");
-            }
+        static Move best_move(
+            std::ostream& log,
+            const std::vector<std::shared_ptr<const SearchNode>>& root_nodes
+        ) {
+            long root_visit_count = 0;
+            std::vector<Move> avalable_moves = (*root_nodes.cbegin())->m_moves;
+            std::vector<NodeStats> move_stats(avalable_moves.size());
 
-            auto best_it = std::max_element(m_children.cbegin(), m_children.cend(),
-                [](const std::shared_ptr<SearchNode>& lhs, const std::shared_ptr<SearchNode>& rhs) {
-                    return lhs->visit_count() < rhs->visit_count();
+            for (auto& root: root_nodes) {
+                if (!root->is_fully_expanded()) {
+                    throw std::runtime_error("Root not expanded.");
                 }
-            );
+                if (avalable_moves != root->m_moves) {
+                    throw std::runtime_error("Available moves don't match.");
+                }
 
-            if (best_it == m_children.cend()) {
-                throw std::runtime_error("No best move found.");
+                root_visit_count += root->visit_count();
+                for (size_t i = 0; i < avalable_moves.size(); i++) {
+                    move_stats.at(i) += root->m_children.at(i)->m_stats;
+                }
             }
 
-            std::shared_ptr<SearchNode> best = *best_it;
-            double win_estimate = best->white_win_estimate();
-            if (m_game_state->next_to_play() == Side::BLACK) {
+            const auto best_it = std::max_element(
+                    move_stats.cbegin(), move_stats.cend(),
+                    [](const NodeStats& lhs, const NodeStats& rhs) {
+                        return lhs.m_visit_count < rhs.m_visit_count;
+                    });
+
+            double win_estimate = static_cast<double>(best_it->m_white_reward) / best_it->m_visit_count;
+            if ((*root_nodes.cbegin())->m_game_state->next_to_play() == Side::BLACK) {
                 win_estimate = 1.0 - win_estimate;
             }
 
-            double decisiveness = static_cast<double>(best->m_visit_count) / m_visit_count;
-            log << "Win estimate: " << win_estimate << ", decisiveness: " << decisiveness << "\n";
+            double decisiveness = static_cast<double>(best_it->m_visit_count) / root_visit_count;
+            log << "Win estimate: " << win_estimate << ", decisiveness: " << decisiveness << ", total samples: " << root_visit_count << "\n";
 
-            auto idx = std::distance(m_children.cbegin(), best_it);
-            return m_moves.at(idx);
+            return avalable_moves.at(std::distance(move_stats.cbegin(), best_it));
         }
 
         static void recache(
@@ -215,64 +258,132 @@ namespace detail {
             return insert.first->second;
         }
     }
-}
 
-Side MCTSPlayer::traverse(std::shared_ptr<detail::SearchNode> node) {
-    std::shared_ptr<detail::SearchNode> next;
-    if (node->is_visited() && !node->is_terminal()) {
-        if (node->is_fully_expanded()) {
-            next = node->best_child_by_uct();
+    class SingleSearch final {
+    private:
+        detail::NodeCache m_node_cache;
+        std::shared_ptr<detail::SearchNode> m_root_node;
+        std::mt19937_64 m_rng;
+
+        Side traverse(std::shared_ptr<detail::SearchNode> node);
+
+        Side random_rollout(std::shared_ptr<const GameState> state);
+
+        void update_root(const std::shared_ptr<const GameState>& game_state);
+
+    public:
+        SingleSearch();
+
+        std::shared_ptr<const detail::SearchNode> evaluate_moves(
+            const std::shared_ptr<const GameState>& game_state,
+            long think_iterations_min
+        );
+    };
+
+    SingleSearch::SingleSearch() : m_rng(make_random_seed()) {
+    }
+
+    Side SingleSearch::traverse(std::shared_ptr<detail::SearchNode> node) {
+        std::shared_ptr<detail::SearchNode> next;
+        if (node->is_visited() && !node->is_terminal()) {
+            if (node->is_fully_expanded()) {
+                next = node->best_child_by_uct();
+            } else {
+                next = node->expand(m_node_cache);
+            }
+        }
+
+        Side winner;
+        if (next) {
+            winner = traverse(next);
         } else {
-            next = node->expand(m_node_cache);
+            winner = random_rollout(node->game_state());
+        }
+        
+        node->accumulate_reward_for(winner);
+        return winner;
+    }  
+
+    Side SingleSearch::random_rollout(std::shared_ptr<const GameState> state) {
+        while (true) {
+            const std::vector<Move> available_moves = state->all_valid_moves();
+
+            if (available_moves.empty()) {
+                return next_side(state->next_to_play());
+            }
+            std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
+            Move move = available_moves.at(dist(m_rng));
+            state = state->apply_move(move);
         }
     }
 
-    Side winner;
-    if (next) {
-        winner = traverse(next);
-    } else {
-        winner = random_rollout(node->game_state());
+    void SingleSearch::update_root(const std::shared_ptr<const GameState>& game_state) {
+        m_root_node = detail::find_or_create(m_node_cache, game_state);
+        m_node_cache.clear();
+
+        detail::SearchNode::recache(m_node_cache, m_root_node);
     }
-    
-    node->accumulate_reward_for(winner);
-    return winner;
-}
 
+    std::shared_ptr<const detail::SearchNode> SingleSearch::evaluate_moves(
+        const std::shared_ptr<const GameState>& game_state,
+        long think_iterations_min
+    ) {
+        update_root(game_state);
 
-Side MCTSPlayer::random_rollout(std::shared_ptr<const GameState> state) const {
-    while (true) {
-        const std::vector<Move> available_moves = state->all_valid_moves();
+        long iteration_count = 0;
+        while (true) {
+            traverse(m_root_node);
+            iteration_count += 1;
 
-        if (available_moves.empty()) {
-            return next_side(state->next_to_play());
+            if (iteration_count >= think_iterations_min && m_root_node->is_fully_expanded()) {
+                break;
+            }
         }
-        std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
-        Move move = available_moves.at(dist(*m_rng));
-        state = state->apply_move(move);
+
+        return m_root_node;
     }
-}
 
-void MCTSPlayer::update_root(const std::shared_ptr<const GameState>& game_state) {
-    size_t size_old = m_node_cache.size();
-    m_root_node = detail::find_or_create(m_node_cache, game_state);
-    m_node_cache.clear();
+    class ParallelSearch final {
+    private:
+        std::ostream& m_log;
+        std::vector<detail::SingleSearch> m_searchers;
 
-    detail::SearchNode::recache(m_node_cache, m_root_node);
-    size_t size_new = m_node_cache.size();
-    m_log << "Node cache: " << size_old << " -> " << size_new << "\n";
+    public:
+        ParallelSearch(std::ostream& log, int thread_count);
+
+        Move decide_move(
+            const std::shared_ptr<const GameState>& game_state,
+            long think_iterations_min
+        );
+    };
+
+    ParallelSearch::ParallelSearch(std::ostream& log, int thread_count) : m_log(log) {
+        m_searchers.resize(thread_count);
+    }
+
+    Move ParallelSearch::decide_move(
+        const std::shared_ptr<const GameState>& game_state,
+        long think_iterations_min
+    ) {
+        std::vector<std::future<std::shared_ptr<const detail::SearchNode>>> futures;
+        for (detail::SingleSearch& s: m_searchers) {
+            futures.push_back(std::async(std::launch::async,
+                [&s, game_state, think_iterations_min]() {
+                    return s.evaluate_moves(game_state, think_iterations_min);
+                }
+            ));
+        }
+
+        std::vector<std::shared_ptr<const detail::SearchNode>> results;
+        for (auto& f : futures) {
+            results.push_back(f.get());
+        }
+
+        return detail::SearchNode::best_move(m_log, results);
+    }
+
 }
 
 Move MCTSPlayer::decide_move(const std::shared_ptr<const GameState>& game_state) {
-    update_root(game_state);
-
-    long iteration_count = 0;
-    while (true) {
-        traverse(m_root_node);
-        iteration_count += 1;
-
-        if (iteration_count >= m_think_iterations_min && m_root_node->is_fully_expanded()) {
-            break;
-        }
-    }
-    return m_root_node->best_move(m_log);
+    return m_search->decide_move(game_state, m_think_iterations_min);
 }

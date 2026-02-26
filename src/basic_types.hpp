@@ -111,3 +111,16 @@ constexpr char square_to_char(Square s) {
 }
 
 Direction direction_from_char(char dir);
+
+bool operator==(const Move& lhs, const Move& rhs);
+
+inline bool operator!=(const Move& lhs, const Move& rhs) {
+    return !(lhs == rhs);
+}
+
+bool operator==(const Location& lhs, const Location& rhs);
+
+inline bool operator!=(const Location& lhs, const Location& rhs) {
+    return !(lhs == rhs);
+}
+
