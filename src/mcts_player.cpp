@@ -7,7 +7,6 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
-#include <thread>
 #include <type_traits>
 #include <unordered_map>
 
@@ -37,35 +36,40 @@ namespace detail {
 
     class SearchNode;
 
+    using CacheKey = const GameState*;
+    using CacheValue = std::unique_ptr<SearchNode>;
+
     struct GameStateHash {
-        size_t operator()(const std::shared_ptr<const GameState>& game_state) const;
+        size_t operator()(const CacheKey& game_state) const;
     };
 
     struct GameStateEqual {
         bool operator()(
-            const std::shared_ptr<const GameState>& lhs,
-            const std::shared_ptr<const GameState>& rhs
+            const CacheKey& lhs,
+            const CacheKey& rhs
         ) const;
     };
 
+
     using NodeCache = std::unordered_map<
-        std::shared_ptr<const GameState>,
-        std::shared_ptr<SearchNode>,
+        CacheKey,
+        CacheValue,
         GameStateHash,
         GameStateEqual>;
 
-    std::shared_ptr<SearchNode> find_or_create(
+    SearchNode* find_or_create(
+        std::vector<std::unique_ptr<const GameState>>& states,
         NodeCache& cache,
-        const std::shared_ptr<const GameState>& game_state
+        std::unique_ptr<const GameState> game_state
     );
 
-    size_t GameStateHash::operator()(const std::shared_ptr<const GameState>& game_state) const {
+    size_t GameStateHash::operator()(const CacheKey& game_state) const {
         return game_state->hash();
     }
 
     bool GameStateEqual::operator()(
-        const std::shared_ptr<const GameState>& lhs,
-        const std::shared_ptr<const GameState>& rhs
+        const CacheKey& lhs,
+        const CacheKey& rhs
     ) const {
         return (*lhs) == (*rhs);
     }
@@ -81,21 +85,22 @@ namespace detail {
         return lhs;
     }
     
-    class SearchNode final : public std::enable_shared_from_this<SearchNode> {
+    class SearchNode final {
     private:
         NodeStats m_stats;
         bool m_moves_enumerated;
 
-        const std::shared_ptr<const GameState> m_game_state;
-        std::vector<std::weak_ptr<SearchNode>> m_parents;
-        std::vector<std::shared_ptr<SearchNode>> m_children;
+        // Game state is owned by the node cache, so we use raw pointers within the graph.
+        const GameState* m_game_state;
+        // Children are owned by the node cache, so we use raw pointers within the graph.
+        std::vector<SearchNode*> m_children;
         std::vector<Move> m_moves;
         std::vector<Move> m_untried_moves;
 
     public:
         ~SearchNode() = default;
 
-        SearchNode(const std::shared_ptr<const GameState>& game_state) :
+        SearchNode(const GameState* game_state) :
             m_moves_enumerated(false),
             m_game_state(game_state) {
         }
@@ -108,7 +113,7 @@ namespace detail {
             return m_moves_enumerated && m_untried_moves.empty();
         }
 
-        std::shared_ptr<const GameState> game_state() {
+        const GameState* game_state() {
             return m_game_state;
         }
 
@@ -117,11 +122,11 @@ namespace detail {
             m_stats.m_visit_count += 1;
         }
 
-        std::shared_ptr<SearchNode> best_child_by_uct() {
+        SearchNode* best_child_by_uct() {
             const long self_visit_count = m_stats.m_visit_count;
             const Side self_side = m_game_state->next_to_play();
             auto max_it = std::max_element(m_children.begin(), m_children.end(),
-                [&](const std::shared_ptr<SearchNode>& lhs, const std::shared_ptr<SearchNode>& rhs) {
+                [&](SearchNode* lhs, SearchNode* rhs) {
                     return lhs->uct_value(self_visit_count, self_side) < rhs->uct_value(self_visit_count, self_side);
                 }
             );
@@ -148,12 +153,11 @@ namespace detail {
             return m_moves_enumerated && m_children.empty() && m_untried_moves.empty();
         }
 
-        std::shared_ptr<SearchNode> expand(NodeCache& cache) {
+        SearchNode* expand(std::vector<std::unique_ptr<const GameState>>& states, NodeCache& cache) {
             if (!m_moves_enumerated) {
                 m_untried_moves = m_game_state->all_valid_moves();
                 m_moves_enumerated = true;
             }
-            std::shared_ptr<SearchNode> self = shared_from_this();
             if (m_untried_moves.empty()) {
                 // This can happen if the game is over.
                 return nullptr;
@@ -161,11 +165,10 @@ namespace detail {
 
             Move move = m_untried_moves.back();
             m_untried_moves.pop_back();
-            std::shared_ptr<const GameState> new_state = m_game_state->apply_move(move);
-            std::shared_ptr<SearchNode> child_node = find_or_create(cache, new_state);
+            std::unique_ptr<const GameState> new_state = m_game_state->apply_move(move);
+            SearchNode* child_node = find_or_create(states, cache, std::move(new_state));
     
             m_children.push_back(child_node);
-            child_node->m_parents.push_back(self);
             m_moves.push_back(move);
 
             if (m_untried_moves.empty()) {
@@ -184,7 +187,7 @@ namespace detail {
 
         static Move best_move(
             std::ostream& log,
-            const std::vector<std::shared_ptr<const SearchNode>>& root_nodes
+            const std::vector<const detail::SearchNode*>& root_nodes
         ) {
             long root_visit_count = 0;
             std::vector<Move> avalable_moves = (*root_nodes.cbegin())->m_moves;
@@ -221,60 +224,89 @@ namespace detail {
             return avalable_moves.at(std::distance(move_stats.cbegin(), best_it));
         }
 
-        static void recache(
-            NodeCache& cache,
-            const std::shared_ptr<detail::SearchNode>& node
+        static void recache_impl(
+            NodeCache& old_cache,
+            NodeCache& new_cache,
+            detail::SearchNode* const node
         ) {
-            auto insert = cache.insert({node->game_state(), node});
-            if (insert.first->first != node->game_state()) {
-                throw std::runtime_error("Key mismatch.");
-            }
-            if (insert.first->second != node) {
-                throw std::runtime_error("Value mismatch.");
-            }
-            if (insert.second) {
-                // Node was newly inserted, so recache children too.
-                for (auto& child : node->m_children) {
-                    recache(cache, child);
+            auto new_it = new_cache.find(node->game_state());
+            if (new_it != new_cache.end()) {
+                if (new_it->second.get() != node) {
+                    throw std::runtime_error("State already in cache with different value.");
                 }
+                return;
+            }
+
+            auto old_it = old_cache.find(node->game_state());
+            if (old_it == old_cache.end()) {
+                throw std::runtime_error("State not present in old cache to migrate.");
+            }
+            std::unique_ptr<SearchNode> node_ptr = std::move(old_it->second);
+            if (node_ptr.get() != node) {
+                throw std::runtime_error("Node cache didn't point to me.");
+            };
+            new_cache.emplace(node->game_state(), std::move(node_ptr));
+
+            for (detail::SearchNode* child : node->m_children) {
+                recache_impl(old_cache, new_cache, child);
             }
         }
 
+        static void recache(
+            std::vector<std::unique_ptr<const GameState>>& states,
+            NodeCache& cache,
+            detail::SearchNode* const node
+        ) {
+            NodeCache old_cache = std::move(cache);
+
+            recache_impl(old_cache, cache, node);
+
+            auto new_end = std::remove_if(states.begin(), states.end(),
+                [&](const std::unique_ptr<const GameState>& ptr) {
+                    return cache.find(ptr.get()) == cache.end();
+                }
+            );
+            states.erase(new_end, states.end());
+        }
     };
 
-    std::shared_ptr<SearchNode> find_or_create(
+    SearchNode* find_or_create(
+        std::vector<std::unique_ptr<const GameState>>& states,
         NodeCache& cache,
-        const std::shared_ptr<const GameState>& game_state
+        std::unique_ptr<const GameState> game_state
     ) {
-        auto it = cache.find(game_state);
+        auto it = cache.find(game_state.get());
         if (it != cache.end()) {
-            return it->second;
+            return it->second.get();
         } else {
-            std::shared_ptr<SearchNode> node = std::make_shared<SearchNode>(game_state);
-            auto insert = cache.emplace(game_state, node);
+            const GameState* game_state_raw = game_state.get();
+            states.push_back(std::move(game_state));
+            std::unique_ptr<SearchNode> node = std::make_unique<SearchNode>(game_state_raw);
+            auto insert = cache.emplace(game_state_raw, std::move(node));
             if (!insert.second) {
                 throw std::runtime_error("Insertion failed.");
             }
-            return insert.first->second;
+            return insert.first->second.get();
         }
     }
 
     class SingleSearch final {
     private:
+        std::vector<std::unique_ptr<const GameState>> m_states;
         detail::NodeCache m_node_cache;
-        std::shared_ptr<detail::SearchNode> m_root_node;
+        detail::SearchNode* m_root_node;
         std::mt19937_64 m_rng;
 
-        Side traverse(std::shared_ptr<detail::SearchNode> node);
+        Side traverse(detail::SearchNode* node);
 
-        Side random_rollout(std::shared_ptr<const GameState> state);
+        Side random_rollout(const GameState* state);
 
         void update_root(const std::shared_ptr<const GameState>& game_state);
 
     public:
         SingleSearch();
 
-        std::shared_ptr<const detail::SearchNode> evaluate_moves(
+        const detail::SearchNode* evaluate_moves(
             const std::shared_ptr<const GameState>& game_state,
             long think_iterations_min
         );
@@ -283,13 +315,13 @@ namespace detail {
     SingleSearch::SingleSearch() : m_rng(make_random_seed()) {
     }
 
-    Side SingleSearch::traverse(std::shared_ptr<detail::SearchNode> node) {
-        std::shared_ptr<detail::SearchNode> next;
+    Side SingleSearch::traverse(detail::SearchNode* node) {
+        detail::SearchNode* next = nullptr;
         if (node->is_visited() && !node->is_terminal()) {
             if (node->is_fully_expanded()) {
                 next = node->best_child_by_uct();
             } else {
-                next = node->expand(m_node_cache);
+                next = node->expand(m_states, m_node_cache);
             }
         }
 
@@ -304,27 +336,38 @@ namespace detail {
         return winner;
     }  
 
-    Side SingleSearch::random_rollout(std::shared_ptr<const GameState> state) {
+    Side SingleSearch::random_rollout(const GameState* state) {
+        // First iteration is special, since we do not own the starting state.
+        const std::vector<Move> available_moves = state->all_valid_moves();
+
+        if (available_moves.empty()) {
+            return next_side(state->next_to_play());
+        }
+        std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
+        Move move = available_moves.at(dist(m_rng));
+
+        std::unique_ptr<GameState> new_state = state->apply_move(move);
+
+        // Subsequent iterations must own the states.
         while (true) {
-            const std::vector<Move> available_moves = state->all_valid_moves();
+            const std::vector<Move> available_moves = new_state->all_valid_moves();
 
             if (available_moves.empty()) {
-                return next_side(state->next_to_play());
+                return next_side(new_state->next_to_play());
             }
             std::uniform_int_distribution<int> dist(0, available_moves.size() - 1);
             Move move = available_moves.at(dist(m_rng));
-            state = state->apply_move(move);
+            new_state = new_state->apply_move(move);
         }
     }
 
     void SingleSearch::update_root(const std::shared_ptr<const GameState>& game_state) {
-        m_root_node = detail::find_or_create(m_node_cache, game_state);
-        m_node_cache.clear();
+        m_root_node = detail::find_or_create(m_states, m_node_cache, std::make_unique<GameState>(*game_state));
 
-        detail::SearchNode::recache(m_node_cache, m_root_node);
+        detail::SearchNode::recache(m_states, m_node_cache, m_root_node);
     }
 
-    std::shared_ptr<const detail::SearchNode> SingleSearch::evaluate_moves(
+    const detail::SearchNode* SingleSearch::evaluate_moves(
         const std::shared_ptr<const GameState>& game_state,
         long think_iterations_min
     ) {
@@ -365,7 +408,7 @@ namespace detail {
         const std::shared_ptr<const GameState>& game_state,
         long think_iterations_min
     ) {
-        std::vector<std::future<std::shared_ptr<const detail::SearchNode>>> futures;
+        std::vector<std::future<const detail::SearchNode*>> futures;
         for (detail::SingleSearch& s: m_searchers) {
             futures.push_back(std::async(std::launch::async,
                 [&s, game_state, think_iterations_min]() {
@@ -374,7 +417,7 @@ namespace detail {
             ));
         }
 
-        std::vector<std::shared_ptr<const detail::SearchNode>> results;
+        std::vector<const detail::SearchNode*> results;
         for (auto& f : futures) {
             results.push_back(f.get());
         }
